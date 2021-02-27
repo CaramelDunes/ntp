@@ -13,7 +13,12 @@ const _dnsApiProviderUrl = {
 const _defaultLookup = 'time.google.com';
 
 RegExp _ipRegex = RegExp(
-    r"^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$");
+    r'^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$');
+
+RegExp _ipV6Regex = RegExp(
+    r'^((([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4})|(([0-9A-Fa-f]{1,4}:){6}:[0-9A-Fa-f]{1,4})|(([0-9A-Fa-f]{1,4}:){5}:([0-9A-Fa-f]{1,4}:)?[0-9A-Fa-f]{1,4})|(([0-9A-Fa-f]{1,4}:){4}:([0-9A-Fa-f]{1,4}:){0,2}[0-9A-Fa-f]{1,4})|(([0-9A-Fa-f]{1,4}:){3}:([0-9A-Fa-f]{1,4}:){0,3}[0-9A-Fa-f]{1,4})|(([0-9A-Fa-f]{1,4}:){2}:([0-9A-Fa-f]{1,4}:){0,4}[0-9A-Fa-f]{1,4})|(([0-9A-Fa-f]{1,4}:){6}((\b((25[0-5])|(1\d{2})|(2[0-4]\d)|(\d{1,2}))\b)\.){3}(\b((25[0-5])|(1\d{2})|(2[0-4]\d)|(\d{1,2}))\b))|(([0-9A-Fa-f]{1,4}:){0,5}:((\b((25[0-5])|(1\d{2})|(2[0-4]\d)|(\d{1,2}))\b)\.){3}(\b((25[0-5])|(1\d{2})|(2[0-4]\d)|(\d{1,2}))\b))|(::([0-9A-Fa-f]{1,4}:){0,5}((\b((25[0-5])|(1\d{2})|(2[0-4]\d)|(\d{1,2}))\b)\.){3}(\b((25[0-5])|(1\d{2})|(2[0-4]\d)|(\d{1,2}))\b))|([0-9A-Fa-f]{1,4}::([0-9A-Fa-f]{1,4}:){0,5}[0-9A-Fa-f]{1,4})|(::([0-9A-Fa-f]{1,4}:){0,6}[0-9A-Fa-f]{1,4})|(([0-9A-Fa-f]{1,4}:){1,7}:))$');
+
+const _true = true;
 
 class NTP {
   /// Return NTP delay in milliseconds
@@ -24,6 +29,12 @@ class NTP {
     Duration timeout,
     DnsApiProvider dnsProvider = DnsApiProvider.google,
   }) async {
+    final _testAddress = await _lookupDoH('ipv6.google.com', dnsProvider);
+    print(_testAddress);
+    if (_true) {
+      return null;
+    }
+
     final ntpServerAddress = await _lookupDoH(lookUpAddress, dnsProvider);
 
     InternetAddress clientAddress = InternetAddress.anyIPv4;
@@ -32,12 +43,14 @@ class NTP {
     }
 
     // Init datagram socket to anyIPv4 and to port 0
-    final RawDatagramSocket _datagramSocket = await RawDatagramSocket.bind(clientAddress, 0);
+    final RawDatagramSocket _datagramSocket =
+        await RawDatagramSocket.bind(clientAddress, 0);
 
     final _NTPMessage _ntpMessage = _NTPMessage();
     final List<int> buffer = _ntpMessage.toByteArray();
     final DateTime time = localTime ?? DateTime.now();
-    _ntpMessage.encodeTimestamp(buffer, 40, (time.millisecondsSinceEpoch / 1000.0) + _ntpMessage.timeToUtc);
+    _ntpMessage.encodeTimestamp(buffer, 40,
+        (time.millisecondsSinceEpoch / 1000.0) + _ntpMessage.timeToUtc);
 
     // Send buffer packet to the address from [addressArray] and port [port]
     _datagramSocket.send(buffer, ntpServerAddress, port);
@@ -93,10 +106,12 @@ class NTP {
   /// Parse data from datagram socket.
   static int _parseData(List<int> data, DateTime time) {
     final _NTPMessage _ntpMessage = _NTPMessage(data);
-    final double destinationTimestamp = (time.millisecondsSinceEpoch / 1000.0) + 2208988800.0;
-    final double localClockOffset = ((_ntpMessage._receiveTimestamp - _ntpMessage._originateTimestamp) +
-            (_ntpMessage._transmitTimestamp - destinationTimestamp)) /
-        2;
+    final double destinationTimestamp =
+        (time.millisecondsSinceEpoch / 1000.0) + 2208988800.0;
+    final double localClockOffset =
+        ((_ntpMessage._receiveTimestamp - _ntpMessage._originateTimestamp) +
+                (_ntpMessage._transmitTimestamp - destinationTimestamp)) /
+            2;
 
     return (localClockOffset * 1000).toInt();
   }
@@ -112,21 +127,29 @@ class NTP {
   }
 
   /// Utility to resolve DNS over HTTPs (DoH)
-  static Future<InternetAddress> _lookupDoH(String host, DnsApiProvider provider) async {
+  static Future<InternetAddress> _lookupDoH(
+      String host, DnsApiProvider provider) async {
     final _provider = _dnsApiProviderUrl[provider];
     final httpClient = HttpClient();
-    final query = '$_provider?name=$host&type=a&do=1';
+    final query = '$_provider?name=$host&do=1';
     final request = await httpClient.getUrl(Uri.parse(query));
     final response = await request.close();
     if (response.statusCode == HttpStatus.ok) {
       // HTTP OK
       final String jsonContent = await _readResponse(response);
-      final Map<String, dynamic> map = json.decode(jsonContent) as Map<String, dynamic>;
+      final Map<String, dynamic> map =
+          json.decode(jsonContent) as Map<String, dynamic>;
+
+      print(map);
 
       final addresses = (map['Answer'] as List<dynamic>)
           .map((dynamic answer) => answer['data'] as String)
           .toList()
-          .firstWhere((element) => _ipRegex.hasMatch(element), orElse: () => null);
+          .firstWhere(
+            (element) =>
+                _ipRegex.hasMatch(element) || _ipV6Regex.hasMatch(element),
+            orElse: () => null,
+          );
 
       return InternetAddress(addresses);
     }
